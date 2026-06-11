@@ -1,0 +1,35 @@
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Dependencies and build outputs
+node_modules/
+dist/
+build/
+out/
+target/
+.next/
+.nuxt/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Logs and env files
+*.log
+.env
+.env.*
+
+# Large archives/binaries usually should not be submitted
+*.zip
+*.rar
+*.7z
+*.tar
+*.tar.gz
+*.mp4
+*.mov
+*.avi

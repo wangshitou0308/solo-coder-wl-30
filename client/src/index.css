@@ -1,0 +1,266 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.seat-chart {
+  position: relative;
+  padding: 20px;
+  background: #f5f5f5;
+  border-radius: 8px;
+  min-height: 400px;
+}
+
+.stage {
+  width: 60%;
+  height: 40px;
+  background: linear-gradient(180deg, #d9d9d9 0%, #bfbfbf 100%);
+  margin: 0 auto 30px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  color: #595959;
+}
+
+.seat-row {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 8px;
+  gap: 4px;
+}
+
+.row-label {
+  width: 30px;
+  text-align: center;
+  font-weight: bold;
+  color: #8c8c8c;
+}
+
+.seat {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #d9d9d9;
+  border-radius: 4px 4px 0 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  transition: all 0.2s;
+  background: #fff;
+}
+
+.seat:hover:not(.sold):not(.locked):not(.reserved):not(.held) {
+  transform: scale(1.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.seat.available {
+  background: #fff;
+  border-color: #d9d9d9;
+}
+
+.seat.selected {
+  background: #1890ff;
+  border-color: #1890ff;
+  color: #fff;
+}
+
+.seat.sold {
+  background: #ff4d4f;
+  border-color: #ff4d4f;
+  color: #fff;
+  cursor: not-allowed;
+}
+
+.seat.locked {
+  background: #faad14;
+  border-color: #faad14;
+  color: #fff;
+  cursor: not-allowed;
+}
+
+.seat.reserved {
+  background: #722ed1;
+  border-color: #722ed1;
+  color: #fff;
+  cursor: not-allowed;
+}
+
+.seat.held {
+  background: #13c2c2;
+  border-color: #13c2c2;
+  color: #fff;
+}
+
+.seat.zone-VIP {
+  border-color: #d4af37;
+}
+
+.seat.zone-A {
+  border-color: #ff6b6b;
+}
+
+.seat.zone-B {
+  border-color: #4ecdc4;
+}
+
+.seat.zone-C {
+  border-color: #95a5a6;
+}
+
+.seat-legend {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 20px;
+  padding: 16px;
+  background: #fff;
+  border-radius: 8px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.legend-color {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+}
+
+.dashboard-card {
+  text-align: center;
+  padding: 24px;
+}
+
+.dashboard-card .ant-statistic-title {
+  font-size: 14px;
+  color: #8c8c8c;
+}
+
+.dashboard-card .ant-statistic-content {
+  font-size: 28px;
+  font-weight: bold;
+}
+
+.login-container {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.login-box {
+  width: 400px;
+  padding: 40px;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.login-title {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.login-title h1 {
+  font-size: 24px;
+  margin-bottom: 8px;
+  color: #262626;
+}
+
+.login-title p {
+  color: #8c8c8c;
+  margin: 0;
+}
+
+.layout-logo {
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 18px;
+  font-weight: bold;
+  background: #002140;
+}
+
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #fff;
+  padding: 0 24px;
+}
+
+.status-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.status-pending {
+  background: #fff7e6;
+  color: #fa8c16;
+}
+
+.status-approved {
+  background: #f6ffed;
+  color: #52c41a;
+}
+
+.status-rejected {
+  background: #fff1f0;
+  color: #f5222d;
+}
+
+.status-draft {
+  background: #f0f0f0;
+  color: #8c8c8c;
+}
+
+.status-onsale {
+  background: #e6f7ff;
+  color: #1890ff;
+}
+
+.status-soldout {
+  background: #fff1f0;
+  color: #f5222d;
+}
+
+.status-cancelled {
+  background: #f5f5f5;
+  color: #bfbfbf;
+}
+
+.status-ended {
+  background: #f9f0ff;
+  color: #722ed1;
+}
+
+.status-refunded {
+  background: #f9f0ff;
+  color: #722ed1;
+}
