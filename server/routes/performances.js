@@ -60,12 +60,13 @@ router.post('/', authenticateToken, requireRole('scheduler', 'manager'), (req, r
       INSERT INTO performances (name, type, group_id, cast, poster_url, description, duration, created_by)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `;
-    req.db.run(sql, [name, type, group_id, cast, poster_url, description, duration, req.user.id]);
-    const id = req.db.exec('SELECT last_insert_rowid() as id')[0].values[0][0];
+    const stmt = req.db.prepare(sql);
+    const result = stmt.run([name, type, group_id, cast, poster_url, description, duration, req.user.id]);
+    const id = result.lastInsertRowid;
     saveDb();
     res.status(201).json({ message: '演出项目创建成功，等待审批', id });
   } catch (err) {
-    return res.status(500).json({ message: '创建失败', error: err.message });
+    return res.status(500).json({ message: '创建失败：' + (err.message || '未知错误') });
   }
 });
 

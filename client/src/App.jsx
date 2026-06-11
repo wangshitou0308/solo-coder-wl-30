@@ -11,6 +11,7 @@ import ShowList from './pages/shows/ShowList';
 import ShowForm from './pages/shows/ShowForm';
 import TicketDesign from './pages/tickets/TicketDesign';
 import SeatSales from './pages/sales/SeatSales';
+import SalesList from './pages/sales/SalesList';
 import OrderList from './pages/orders/OrderList';
 import OrderDetail from './pages/orders/OrderDetail';
 import BoxOffice from './pages/statistics/BoxOffice';
@@ -91,6 +92,14 @@ const App = () => {
           <Route path=":id/sales" element={
             <PrivateRoute roles={['seller', 'scheduler', 'manager']}>
               <SeatSales />
+            </PrivateRoute>
+          } />
+        </Route>
+
+        <Route path="sales">
+          <Route index element={
+            <PrivateRoute roles={['seller', 'scheduler', 'manager']}>
+              <SalesList />
             </PrivateRoute>
           } />
         </Route>

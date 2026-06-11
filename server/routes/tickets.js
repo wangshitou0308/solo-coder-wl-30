@@ -53,12 +53,13 @@ router.post('/shows/:showId/ticket-version', authenticateToken, requireRole('sch
     req.db.run('BEGIN TRANSACTION');
     
     try {
-      req.db.prepare(`
+      const tvStmt = req.db.prepare(`
         INSERT INTO ticket_versions (show_id, name)
         VALUES (?, ?)
-      `).run([showId, name || '标准票版']);
+      `);
+      const tvResult = tvStmt.run([showId, name || '标准票版']);
       
-      const versionId = req.db.exec('SELECT last_insert_rowid() as id')[0].values[0][0];
+      const versionId = tvResult.lastInsertRowid;
       const zoneStmt = req.db.prepare(`
         INSERT INTO seat_zones (ticket_version_id, zone_name, base_price, seat_count)
         VALUES (?, ?, ?, ?)
@@ -66,8 +67,8 @@ router.post('/shows/:showId/ticket-version', authenticateToken, requireRole('sch
       const zoneMap = {};
       
       zones.forEach(zone => {
-        zoneStmt.run(versionId, zone.zone_name, zone.base_price, zone.seat_count);
-        const zoneId = req.db.exec('SELECT last_insert_rowid() as id')[0].values[0][0];
+        const zoneResult = zoneStmt.run(versionId, zone.zone_name, zone.base_price, zone.seat_count);
+        const zoneId = zoneResult.lastInsertRowid;
         zoneMap[zone.zone_name] = zoneId;
       });
 

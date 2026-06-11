@@ -136,12 +136,12 @@ router.post('/', authenticateToken, requireRole('scheduler', 'manager'), (req, r
       INSERT INTO shows (performance_id, theater_id, show_date, start_time, end_time, seat_template_id, created_by)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
-    stmt.run([performance_id, theater_id, show_date, start_time, end_time, seat_template_id, req.user.id]);
-    const lastId = req.db.exec('SELECT last_insert_rowid() as id')[0].values[0][0];
+    const result = stmt.run([performance_id, theater_id, show_date, start_time, end_time, seat_template_id, req.user.id]);
+    const lastId = result.lastInsertRowid;
     saveDb();
     res.status(201).json({ message: '场次创建成功', id: lastId });
   } catch (err) {
-    res.status(500).json({ message: '创建失败', error: err.message });
+    res.status(500).json({ message: '创建失败：' + (err.message || '未知错误') });
   }
 });
 
@@ -184,8 +184,8 @@ router.post('/batch', authenticateToken, requireRole('scheduler', 'manager'), (r
           continue;
         }
 
-        insertShow.run([performance_id, theater_id, dateStr, start_time, end_time, seat_template_id, req.user.id]);
-        const lastId = req.db.exec('SELECT last_insert_rowid() as id')[0].values[0][0];
+        const insertResult = insertShow.run([performance_id, theater_id, dateStr, start_time, end_time, seat_template_id, req.user.id]);
+        const lastId = insertResult.lastInsertRowid;
         createdShows.push({ id: lastId, date: dateStr });
       }
       
@@ -259,8 +259,8 @@ router.post('/:id/add-show', authenticateToken, requireRole('scheduler', 'manage
       INSERT INTO shows (performance_id, theater_id, show_date, start_time, end_time, seat_template_id, created_by, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')
     `);
-    stmt.run([originalShow.performance_id, originalShow.theater_id, show_date, start_time, end_time, originalShow.seat_template_id, req.user.id]);
-    const lastId = req.db.exec('SELECT last_insert_rowid() as id')[0].values[0][0];
+    const addResult = stmt.run([originalShow.performance_id, originalShow.theater_id, show_date, start_time, end_time, originalShow.seat_template_id, req.user.id]);
+    const lastId = addResult.lastInsertRowid;
     saveDb();
     res.status(201).json({ message: '加场成功，请配置票版后上架', id: lastId });
   } catch (err) {

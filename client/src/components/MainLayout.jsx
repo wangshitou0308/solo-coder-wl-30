@@ -59,7 +59,6 @@ const MainLayout = () => {
         key: '/sales',
         icon: <ShoppingCartOutlined />,
         label: '售票管理',
-        onClick: () => navigate('/shows'),
       });
     }
 
@@ -118,9 +117,7 @@ const MainLayout = () => {
   };
 
   const handleMenuClick = ({ key }) => {
-    if (key !== '/sales') {
-      navigate(key);
-    }
+    navigate(key);
   };
 
   const handleLogout = async () => {

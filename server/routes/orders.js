@@ -29,10 +29,13 @@ router.post('/hold-seats', authenticateToken, (req, res) => {
     req.db.run('BEGIN IMMEDIATE');
 
     const placeholders = seat_ids.map(() => '?').join(',');
+    const userIdentifier = buyer_phone || req.user.username;
+    
     const seats = req.db.prepare(`
       SELECT * FROM seats 
-      WHERE id IN (${placeholders}) AND show_id = ? AND status = 'available'
-    `).all([...seat_ids, show_id]);
+      WHERE id IN (${placeholders}) AND show_id = ? 
+        AND (status = 'available' OR (status = 'held' AND held_by_phone = ?))
+    `).all([...seat_ids, show_id, userIdentifier]);
 
     if (seats.length !== seat_ids.length) {
       req.db.run('ROLLBACK');
@@ -46,7 +49,7 @@ router.post('/hold-seats', authenticateToken, (req, res) => {
         UPDATE seats 
         SET status = 'held', held_by_phone = ?, held_expires_at = ?
         WHERE id = ?
-      `, [buyer_phone || req.user.username, heldExpiresAt, id]);
+      `, [userIdentifier, heldExpiresAt, id]);
     });
 
     req.db.run('COMMIT');
@@ -61,7 +64,37 @@ router.post('/hold-seats', authenticateToken, (req, res) => {
     if (err.message === '部分座位已被占用，请重新选择') {
       return res.status(400).json({ message: err.message });
     }
-    return res.status(500).json({ message: '锁座失败', error: err.message });
+    return res.status(500).json({ message: '锁座失败：' + (err.message || '未知错误') });
+  }
+});
+
+router.post('/release-seats', authenticateToken, (req, res) => {
+  const { show_id, seat_ids } = req.body;
+
+  if (!show_id || !seat_ids || seat_ids.length === 0) {
+    return res.status(400).json({ message: '请选择要释放的座位' });
+  }
+
+  try {
+    req.db.run('BEGIN IMMEDIATE');
+
+    const placeholders = seat_ids.map(() => '?').join(',');
+    const userIdentifier = req.user.username;
+    
+    req.db.prepare(`
+      UPDATE seats 
+      SET status = 'available', held_by_phone = NULL, held_expires_at = NULL
+      WHERE id IN (${placeholders}) AND show_id = ? 
+        AND status = 'held'
+    `).run([...seat_ids, show_id]);
+
+    req.db.run('COMMIT');
+    saveDb();
+
+    res.json({ message: '座位已释放' });
+  } catch (err) {
+    try { req.db.run('ROLLBACK'); } catch (e) {}
+    return res.status(500).json({ message: '释放座位失败：' + (err.message || '未知错误') });
   }
 });
 
@@ -126,19 +159,19 @@ router.post('/create', authenticateToken, (req, res) => {
     const paymentStatus = payment_method ? 'paid' : 'pending';
     const paidAt = payment_method ? new Date().toISOString() : null;
 
-    req.db.run(`
+    const insertOrderStmt = req.db.prepare(`
       INSERT INTO orders (
         order_no, show_id, buyer_name, buyer_phone, id_card,
         total_amount, discount_amount, actual_amount, payment_method,
         payment_status, order_type, seller_id, paid_at, expires_at, remark
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [
+    `);
+    const insertOrderResult = insertOrderStmt.run([
       orderNo, show_id, buyer_name, buyer_phone, id_card,
       totalAmount, discountAmount, actualAmount, payment_method,
       paymentStatus, order_type || 'online', req.user.id, paidAt, expiresAt, remark
     ]);
-
-    const orderId = req.db.exec('SELECT last_insert_rowid() as id')[0].values[0][0];
+    const orderId = insertOrderResult.lastInsertRowid;
 
     orderItems.forEach(item => {
       req.db.run(`

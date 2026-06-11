@@ -25,12 +25,12 @@ router.post('/theaters', authenticateToken, requireRole('manager'), (req, res) =
       INSERT INTO theaters (name, layout_type, total_seats, description)
       VALUES (?, ?, ?, ?)
     `);
-    stmt.run([name, layout_type, total_seats, description]);
-    const id = req.db.exec('SELECT last_insert_rowid() as id')[0].values[0][0];
+    const result = stmt.run([name, layout_type, total_seats, description]);
+    const id = result.lastInsertRowid;
     saveDb();
     res.status(201).json({ message: '剧场创建成功', id });
   } catch (err) {
-    res.status(500).json({ message: '创建失败', error: err.message });
+    res.status(500).json({ message: '创建失败：' + (err.message || '未知错误') });
   }
 });
 
@@ -55,12 +55,12 @@ router.post('/groups', authenticateToken, requireRole('manager'), (req, res) => 
       INSERT INTO theater_groups (name, contact, phone)
       VALUES (?, ?, ?)
     `);
-    stmt.run([name, contact, phone]);
-    const id = req.db.exec('SELECT last_insert_rowid() as id')[0].values[0][0];
+    const result = stmt.run([name, contact, phone]);
+    const id = result.lastInsertRowid;
     saveDb();
     res.status(201).json({ message: '剧团创建成功', id });
   } catch (err) {
-    res.status(500).json({ message: '创建失败', error: err.message });
+    res.status(500).json({ message: '创建失败：' + (err.message || '未知错误') });
   }
 });
 
@@ -103,12 +103,12 @@ router.post('/seat-templates', authenticateToken, requireRole('scheduler', 'mana
       INSERT INTO seat_templates (theater_id, name, layout_data)
       VALUES (?, ?, ?)
     `);
-    stmt.run([theater_id, name, JSON.stringify(layout_data)]);
-    const id = req.db.exec('SELECT last_insert_rowid() as id')[0].values[0][0];
+    const result = stmt.run([theater_id, name, JSON.stringify(layout_data)]);
+    const id = result.lastInsertRowid;
     saveDb();
     res.status(201).json({ message: '座位模板创建成功', id });
   } catch (err) {
-    res.status(500).json({ message: '创建失败', error: err.message });
+    res.status(500).json({ message: '创建失败：' + (err.message || '未知错误') });
   }
 });
 
@@ -158,12 +158,12 @@ router.post('/theaters/:id/generate-template', authenticateToken, requireRole('s
       INSERT INTO seat_templates (theater_id, name, layout_data)
       VALUES (?, ?, ?)
     `);
-    stmt.run([id, name || `${theater.name}-默认模板`, JSON.stringify(layout_data)]);
-    const templateId = req.db.exec('SELECT last_insert_rowid() as id')[0].values[0][0];
+    const result = stmt.run([id, name || `${theater.name}-默认模板`, JSON.stringify(layout_data)]);
+    const templateId = result.lastInsertRowid;
     saveDb();
     res.status(201).json({ message: '座位模板生成成功', id: templateId, layout_data });
   } catch (err) {
-    res.status(500).json({ message: '生成失败', error: err.message });
+    res.status(500).json({ message: '生成失败：' + (err.message || '未知错误') });
   }
 });
 

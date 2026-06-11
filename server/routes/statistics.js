@@ -391,15 +391,16 @@ router.post('/shows/:showId/settlement/create', authenticateToken, requireRole('
     const groupShare = netRevenue * (share_ratio / 100);
     const theaterShare = netRevenue - groupShare;
 
-    req.db.run(`
+    const stmt = req.db.prepare(`
       INSERT INTO settlements (
         show_id, total_tickets, total_revenue, total_refunds, 
         net_revenue, group_share, theater_share, share_ratio
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `, [showId, stats.total_tickets, stats.total_revenue, stats.total_refunds,
+    `);
+    const result = stmt.run([showId, stats.total_tickets, stats.total_revenue, stats.total_refunds,
         netRevenue, groupShare, theaterShare, share_ratio]);
     
-    const id = req.db.exec('SELECT last_insert_rowid() as id')[0].values[0][0];
+    const id = result.lastInsertRowid;
     saveDb();
     
     res.json({ message: '结算报表创建成功', id });

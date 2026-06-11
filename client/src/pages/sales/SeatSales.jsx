@@ -25,6 +25,9 @@ import {
   PhoneOutlined,
   IdcardOutlined,
   ArrowLeftOutlined,
+  LockOutlined,
+  UnlockOutlined,
+  ClearOutlined,
 } from '@ant-design/icons';
 import { useParams, useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
@@ -73,8 +76,9 @@ const SeatSales = () => {
   const [zones, setZones] = useState([]);
   const [discounts, setDiscounts] = useState([]);
   const [seats, setSeats] = useState([]);
-  const [selectedSeats, setSelectedSeats] = useState([]);
+  const [selectedSeatIds, setSelectedSeatIds] = useState([]);
   const [selectedDiscountIds, setSelectedDiscountIds] = useState([]);
+  const [seatsLocked, setSeatsLocked] = useState(false);
   const [holdExpiresAt, setHoldExpiresAt] = useState(null);
   const [countdown, setCountdown] = useState('');
 
@@ -126,7 +130,8 @@ const SeatSales = () => {
 
       if (diff <= 0) {
         setHoldExpiresAt(null);
-        setSelectedSeats([]);
+        setSeatsLocked(false);
+        setSelectedSeatIds([]);
         message.warning('锁座已过期，请重新选座');
         fetchTicketVersion();
         return;
@@ -142,55 +147,87 @@ const SeatSales = () => {
     return () => clearInterval(timer);
   }, [holdExpiresAt, fetchTicketVersion]);
 
-  const handleSeatClick = async (seat) => {
+  useEffect(() => {
+    return () => {
+      if (seatsLocked && selectedSeatIds.length > 0) {
+        orderAPI.releaseSeats({
+          showId,
+          seatIds: selectedSeatIds,
+        }).catch(() => {});
+      }
+    };
+  }, [seatsLocked, selectedSeatIds, showId]);
+
+  const selectedSeats = useMemo(() => {
+    return seats.filter((s) => selectedSeatIds.includes(s.id));
+  }, [seats, selectedSeatIds]);
+
+  const handleSeatClick = (seat) => {
     if (seat.status === 'sold') {
       message.info('已售座位不可选择');
       return;
     }
-    if (seat.status === 'locked' || seat.status === 'reserved' || seat.status === 'held') {
-      message.info('该座位暂不可选');
+    if (seat.status === 'locked' || seat.status === 'reserved') {
+      message.info('该座位暂不可选（已被锁定/预留）');
+      return;
+    }
+    if (seat.status === 'held') {
+      message.info('该座位已被电话预留');
       return;
     }
 
-    const isSelected = selectedSeats.some((s) => s.id === seat.id);
+    const isSelected = selectedSeatIds.includes(seat.id);
 
     if (isSelected) {
-      setSelectedSeats(selectedSeats.filter((s) => s.id !== seat.id));
+      if (seatsLocked) {
+        message.info('座位已锁定，如需修改请先清空选座');
+        return;
+      }
+      setSelectedSeatIds(selectedSeatIds.filter((id) => id !== seat.id));
       return;
     }
 
-    if (selectedSeats.length >= 10) {
-      message.warning('最多可选择10个座位');
+    if (seatsLocked) {
+      message.info('座位已锁定，如需添加请先清空选座后重新选择');
       return;
     }
 
-    const newSelectedSeats = [...selectedSeats, seat];
+    const orderType = form.getFieldValue('orderType');
+    const maxSeats = orderType === 'group' ? 100 : 20;
+    if (selectedSeatIds.length >= maxSeats) {
+      message.warning(`最多可选择${maxSeats}个座位（团体票支持更多，可切换售票类型为"团体票"）`);
+      return;
+    }
+
+    setSelectedSeatIds([...selectedSeatIds, seat.id]);
+  };
+
+  const handleLockSeats = async () => {
+    if (selectedSeatIds.length === 0) {
+      message.warning('请先选择座位');
+      return;
+    }
 
     try {
       const res = await orderAPI.holdSeats({
         showId,
-        seatIds: newSelectedSeats.map((s) => s.id),
+        seatIds: selectedSeatIds,
         holdMinutes: 15,
         buyerPhone: form.getFieldValue('buyerPhone') || '',
       });
 
-      setSelectedSeats(newSelectedSeats);
+      setSeatsLocked(true);
       setHoldExpiresAt(res.data.expiresAt);
-
-      setSeats((prevSeats) =>
-        prevSeats.map((s) =>
-          newSelectedSeats.some((ns) => ns.id === s.id)
-            ? { ...s, status: 'held' }
-            : s
-        )
-      );
+      message.success(`已锁定${selectedSeatIds.length}个座位，请在15分钟内完成下单`);
+      fetchTicketVersion();
     } catch (err) {
-      message.error(err.response?.data?.message || '锁座失败');
+      message.error(err.response?.data?.message || '锁座失败，部分座位可能已被占用，请重新选择');
+      fetchTicketVersion();
     }
   };
 
   const getSeatStyle = (seat) => {
-    const isSelected = selectedSeats.some((s) => s.id === seat.id);
+    const isSelected = selectedSeatIds.includes(seat.id);
     const baseStyle = {
       width: 36,
       height: 36,
@@ -200,34 +237,37 @@ const SeatSales = () => {
       alignItems: 'center',
       justifyContent: 'center',
       fontSize: 11,
-      cursor: seat.status === 'sold' || seat.status === 'locked' || seat.status === 'reserved' || seat.status === 'held'
-        ? 'not-allowed'
-        : 'pointer',
+      cursor: 'not-allowed',
       border: isSelected ? '2px solid #1890ff' : '2px solid transparent',
       transition: 'all 0.2s',
       boxSizing: 'border-box',
+      userSelect: 'none',
     };
 
+    const isClickable = seat.status === 'available';
+
     if (isSelected) {
-      return { ...baseStyle, backgroundColor: '#1890ff', color: '#fff' };
+      return { ...baseStyle, backgroundColor: '#1890ff', color: '#fff', cursor: 'pointer' };
+    }
+
+    if (!isClickable) {
+      const zoneColor = zoneColors[seat.zoneName] || '#8c8c8c';
+      switch (seat.status) {
+        case 'sold':
+          return { ...baseStyle, backgroundColor: '#d9d9d9', color: '#bfbfbf' };
+        case 'locked':
+          return { ...baseStyle, backgroundColor: '#fa8c16', color: '#fff' };
+        case 'reserved':
+          return { ...baseStyle, backgroundColor: '#1890ff', color: '#fff' };
+        case 'held':
+          return { ...baseStyle, backgroundColor: '#13c2c2', color: '#fff' };
+        default:
+          return { ...baseStyle, backgroundColor: zoneColor, opacity: 0.5, color: '#fff' };
+      }
     }
 
     const zoneColor = zoneColors[seat.zoneName] || '#8c8c8c';
-
-    switch (seat.status) {
-      case 'available':
-        return { ...baseStyle, backgroundColor: zoneColor, color: '#fff' };
-      case 'sold':
-        return { ...baseStyle, backgroundColor: '#d9d9d9', color: '#bfbfbf' };
-      case 'locked':
-        return { ...baseStyle, backgroundColor: '#fa8c16', color: '#fff' };
-      case 'reserved':
-        return { ...baseStyle, backgroundColor: '#1890ff', color: '#fff' };
-      case 'held':
-        return { ...baseStyle, backgroundColor: '#13c2c2', color: '#fff' };
-      default:
-        return { ...baseStyle, backgroundColor: zoneColor, color: '#fff' };
-    }
+    return { ...baseStyle, backgroundColor: zoneColor, color: '#fff', cursor: 'pointer' };
   };
 
   const calculateDiscount = useCallback(() => {
@@ -272,9 +312,26 @@ const SeatSales = () => {
       const values = await form.validateFields();
       setSubmitting(true);
 
+      if (!seatsLocked) {
+        try {
+          const holdRes = await orderAPI.holdSeats({
+            showId,
+            seatIds: selectedSeatIds,
+            holdMinutes: 15,
+            buyerPhone: values.buyerPhone || '',
+          });
+          setHoldExpiresAt(holdRes.data.expiresAt);
+          setSeatsLocked(true);
+        } catch (holdErr) {
+          message.error(holdErr.response?.data?.message || '锁座失败，部分座位可能已被占用');
+          fetchTicketVersion();
+          return;
+        }
+      }
+
       const orderData = {
         showId,
-        seatIds: selectedSeats.map((s) => s.id),
+        seatIds: selectedSeatIds,
         buyerName: values.buyerName,
         buyerPhone: values.buyerPhone,
         idCard: values.idCard,
@@ -299,9 +356,10 @@ const SeatSales = () => {
       }
 
       form.resetFields();
-      setSelectedSeats([]);
+      setSelectedSeatIds([]);
       setSelectedDiscountIds([]);
       setHoldExpiresAt(null);
+      setSeatsLocked(false);
       fetchTicketVersion();
 
       setTimeout(() => {
@@ -319,11 +377,29 @@ const SeatSales = () => {
   };
 
   const handleClearSelection = () => {
+    if (selectedSeatIds.length === 0) return;
+
     Modal.confirm({
-      title: '确认清空选择？',
-      content: '清空后已锁座位将被释放',
-      onOk: () => {
-        setSelectedSeats([]);
+      title: seatsLocked ? '确认释放锁定的座位？' : '确认清空选择？',
+      content: seatsLocked
+        ? `将释放已锁定的${selectedSeatIds.length}个座位，其他用户可以购买`
+        : `将清空已选择的${selectedSeatIds.length}个座位`,
+      okText: '确认清空',
+      cancelText: '取消',
+      onOk: async () => {
+        if (seatsLocked && selectedSeatIds.length > 0) {
+          try {
+            await orderAPI.releaseSeats({
+              showId,
+              seatIds: selectedSeatIds,
+            });
+            message.success('座位已释放');
+          } catch (err) {
+            message.error('释放座位失败');
+          }
+        }
+        setSelectedSeatIds([]);
+        setSeatsLocked(false);
         setHoldExpiresAt(null);
         fetchTicketVersion();
       },
@@ -332,6 +408,14 @@ const SeatSales = () => {
 
   const handleDiscountChange = (value) => {
     setSelectedDiscountIds(value || []);
+  };
+
+  const handleOrderTypeChange = (e) => {
+    const newType = e.target.value;
+    const maxSeats = newType === 'group' ? 100 : 20;
+    if (selectedSeatIds.length > maxSeats) {
+      message.warning(`当前已选${selectedSeatIds.length}个座位，普通售票最多${maxSeats}个，建议使用团体票`);
+    }
   };
 
   const uniqueZones = useMemo(() => {
@@ -351,18 +435,20 @@ const SeatSales = () => {
       <div>
         <Space style={{ marginBottom: 16, flexWrap: 'wrap' }}>
           <span>图例：</span>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            <span
-              style={{
-                display: 'inline-block',
-                width: 16,
-                height: 16,
-                backgroundColor: '#52c41a',
-                borderRadius: 2,
-              }}
-            />
-            可售
-          </span>
+          {Object.entries(seatStatusMap).map(([key, info]) => (
+            <span key={key} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <span
+                style={{
+                  display: 'inline-block',
+                  width: 16,
+                  height: 16,
+                  backgroundColor: info.bgColor,
+                  borderRadius: 2,
+                }}
+              />
+              {info.text}
+            </span>
+          ))}
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
             <span
               style={{
@@ -370,46 +456,11 @@ const SeatSales = () => {
                 width: 16,
                 height: 16,
                 backgroundColor: '#1890ff',
+                border: '2px solid #1890ff',
                 borderRadius: 2,
               }}
             />
             已选
-          </span>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            <span
-              style={{
-                display: 'inline-block',
-                width: 16,
-                height: 16,
-                backgroundColor: '#d9d9d9',
-                borderRadius: 2,
-              }}
-            />
-            已售
-          </span>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            <span
-              style={{
-                display: 'inline-block',
-                width: 16,
-                height: 16,
-                backgroundColor: '#fa8c16',
-                borderRadius: 2,
-              }}
-            />
-            已锁
-          </span>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            <span
-              style={{
-                display: 'inline-block',
-                width: 16,
-                height: 16,
-                backgroundColor: '#13c2c2',
-                borderRadius: 2,
-              }}
-            />
-            电话预留
           </span>
         </Space>
 
@@ -496,6 +547,23 @@ const SeatSales = () => {
       width: 80,
       render: (text, record) => `¥${record.price || record.basePrice || 0}`,
     },
+    {
+      title: '操作',
+      key: 'action',
+      width: 60,
+      render: (_, record) => (
+        !seatsLocked && (
+          <Button
+            type="link"
+            size="small"
+            danger
+            onClick={() => setSelectedSeatIds(selectedSeatIds.filter((id) => id !== record.id))}
+          >
+            移除
+          </Button>
+        )
+      ),
+    },
   ];
 
   if (loading) {
@@ -520,8 +588,8 @@ const SeatSales = () => {
         <Space direction="vertical" size="small" style={{ width: '100%' }}>
           <Space style={{ width: '100%', justifyContent: 'space-between' }}>
             <Space>
-              <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/shows')}>
-                返回列表
+              <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/sales')}>
+                返回售票列表
               </Button>
               <Title level={4} style={{ margin: 0 }}>
                 售票选座
@@ -556,10 +624,17 @@ const SeatSales = () => {
               </Col>
             </Row>
           )}
-          {holdExpiresAt && (
+          {holdExpiresAt && seatsLocked && (
             <div style={{ padding: '8px 12px', background: '#fffbe6', borderRadius: 4, display: 'inline-block' }}>
               <Text type="warning" strong>
-                ⏱ 锁座剩余时间：{countdown}，请尽快完成下单
+                <LockOutlined /> 座位已锁定，剩余时间：{countdown}，请尽快完成下单
+              </Text>
+            </div>
+          )}
+          {!seatsLocked && selectedSeatIds.length > 0 && (
+            <div style={{ padding: '8px 12px', background: '#e6f7ff', borderRadius: 4, display: 'inline-block' }}>
+              <Text type="info" strong>
+                <UnlockOutlined /> 已预选{selectedSeatIds.length}个座位，座位尚未锁定，请尽快「锁定座位」或「确认下单」
               </Text>
             </div>
           )}
@@ -580,16 +655,31 @@ const SeatSales = () => {
                 <ShoppingCartOutlined />
                 <span>订单信息</span>
                 {selectedSeats.length > 0 && (
-                  <Tag color="blue">{selectedSeats.length} 张</Tag>
+                  <Tag color={seatsLocked ? 'orange' : 'blue'}>
+                    {seatsLocked ? '已锁定' : '预选中'} {selectedSeats.length} 张
+                  </Tag>
                 )}
               </Space>
             }
             size="small"
             extra={
               selectedSeats.length > 0 && (
-                <Button size="small" danger onClick={handleClearSelection}>
-                  清空
-                </Button>
+                <Space>
+                  {!seatsLocked && (
+                    <Button
+                      size="small"
+                      icon={<LockOutlined />}
+                      type="primary"
+                      ghost
+                      onClick={handleLockSeats}
+                    >
+                      锁定座位
+                    </Button>
+                  )}
+                  <Button size="small" danger icon={<ClearOutlined />} onClick={handleClearSelection}>
+                    清空
+                  </Button>
+                </Space>
               )
             }
           >
@@ -605,7 +695,7 @@ const SeatSales = () => {
               <Title level={5} style={{ marginTop: 0 }}>已选座位</Title>
               {selectedSeats.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '24px 0', color: '#999' }}>
-                  请在左侧座位图中选择座位
+                  请在左侧座位图中选择座位（点击可售座位选择，再次点击已选座位可取消）
                 </div>
               ) : (
                 <Table
@@ -697,7 +787,7 @@ const SeatSales = () => {
                 name="orderType"
                 rules={[{ required: true, message: '请选择售票类型' }]}
               >
-                <Radio.Group>
+                <Radio.Group onChange={handleOrderTypeChange}>
                   {orderTypeOptions.map((opt) => (
                     <Radio key={opt.value} value={opt.value}>
                       {opt.label}
@@ -745,7 +835,7 @@ const SeatSales = () => {
                   size="large"
                 >
                   {selectedSeats.length > 0
-                    ? `确认下单 ¥${actualPrice.toFixed(2)}`
+                    ? `${seatsLocked ? '确认下单' : '锁定并下单'} ¥${actualPrice.toFixed(2)}`
                     : '请先选择座位'}
                 </Button>
               </Form.Item>

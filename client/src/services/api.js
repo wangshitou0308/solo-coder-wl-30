@@ -105,6 +105,7 @@ export const ticketAPI = {
 
 export const orderAPI = {
   holdSeats: (data) => api.post('/orders/hold-seats', data),
+  releaseSeats: (data) => api.post('/orders/release-seats', data),
   create: (data) => api.post('/orders/create', data),
   pay: (id, data) => api.post(`/orders/${id}/pay`, data),
   cancelExpired: () => api.post('/orders/cancel-expired'),
