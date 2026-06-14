@@ -14,6 +14,10 @@ import {
   FileTextOutlined,
   TeamOutlined,
   LineChartOutlined,
+  HistoryOutlined,
+  DollarOutlined,
+  SafetyCertificateOutlined,
+  ExclamationCircleOutlined,
 } from '@ant-design/icons';
 
 const { Header, Sider, Content } = Layout;
@@ -82,7 +86,7 @@ const MainLayout = () => {
           {
             key: '/statistics/settlement',
             icon: <TeamOutlined />,
-            label: '结算分账',
+            label: '结算分账（旧）',
           },
           {
             key: '/statistics/repertoire',
@@ -98,6 +102,22 @@ const MainLayout = () => {
       });
     }
 
+    if (hasRole('manager', 'finance')) {
+      items.push({
+        key: '/settlements',
+        icon: <DollarOutlined />,
+        label: '财务结算',
+      });
+    }
+
+    if (hasRole('manager', 'finance')) {
+      items.push({
+        key: '/audit',
+        icon: <HistoryOutlined />,
+        label: '审计日志',
+      });
+    }
+
     if (hasRole('manager')) {
       items.push({
         key: '/settings',
@@ -108,6 +128,11 @@ const MainLayout = () => {
             key: '/settings/theaters',
             icon: <SettingOutlined />,
             label: '剧场与剧团',
+          },
+          {
+            key: '/settings/refund-rules',
+            icon: <ExclamationCircleOutlined />,
+            label: '退票规则管理',
           },
         ],
       });

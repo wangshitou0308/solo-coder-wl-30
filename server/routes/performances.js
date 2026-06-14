@@ -1,6 +1,7 @@
 const express = require('express');
 const { saveDb } = require('../database/db');
 const { authenticateToken, requireRole } = require('../middleware/auth');
+const { writeAuditLog } = require('./audit');
 
 const router = express.Router();
 
@@ -56,17 +57,39 @@ router.post('/', authenticateToken, requireRole('scheduler', 'manager'), (req, r
   }
 
   try {
+    req.db.run('BEGIN IMMEDIATE');
     const sql = `
       INSERT INTO performances (name, type, group_id, cast, poster_url, description, duration, created_by)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `;
     const stmt = req.db.prepare(sql);
-    const result = stmt.run([name, type, group_id, cast, poster_url, description, duration, req.user.id]);
+    const result = stmt.run([
+      name, type, Number(group_id),
+      cast ?? null, poster_url ?? null, description ?? null,
+      duration ?? null, req.user.id
+    ]);
     const id = result.lastInsertRowid;
+
+    writeAuditLog(req.db, {
+      user_id: req.user.id,
+      user_name: req.user.name,
+      action: 'create_performance',
+      target_type: 'performance',
+      target_id: id,
+      detail: JSON.stringify({
+        name, type, group_id, cast, poster_url, description, duration,
+        initial_status: 'pending'
+      }),
+      ip_address: req.ip
+    });
+
+    req.db.run('COMMIT');
     saveDb();
     res.status(201).json({ message: '演出项目创建成功，等待审批', id });
   } catch (err) {
-    return res.status(500).json({ message: '创建失败：' + (err.message || '未知错误') });
+    try { req.db.run('ROLLBACK'); } catch (e) {}
+    console.error('[performances] POST 500:', err);
+    return res.status(500).json({ message: '创建失败：' + (err.message || '未知错误'), error: err.message });
   }
 });
 
@@ -104,15 +127,35 @@ router.post('/:id/approve', authenticateToken, requireRole('manager'), (req, res
       return res.status(400).json({ message: '只能审批待审批的演出项目' });
     }
 
+    req.db.run('BEGIN IMMEDIATE');
+
     const sql = `
       UPDATE performances 
       SET status = 'approved', approver_id = ?, approved_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `;
     req.db.run(sql, [req.user.id, id]);
+
+    writeAuditLog(req.db, {
+      user_id: req.user.id,
+      user_name: req.user.name,
+      action: 'approve_performance',
+      target_type: 'performance',
+      target_id: parseInt(id),
+      detail: JSON.stringify({
+        performance_name: perf.name,
+        previous_status: perf.status,
+        new_status: 'approved',
+        approver: req.user.name
+      }),
+      ip_address: req.ip
+    });
+
+    req.db.run('COMMIT');
     saveDb();
     res.json({ message: '演出项目审批通过' });
   } catch (err) {
+    try { req.db.run('ROLLBACK'); } catch (e) {}
     return res.status(500).json({ message: '审批失败', error: err.message });
   }
 });
@@ -132,15 +175,36 @@ router.post('/:id/reject', authenticateToken, requireRole('manager'), (req, res)
       return res.status(400).json({ message: '只能驳回待审批的演出项目' });
     }
 
+    req.db.run('BEGIN IMMEDIATE');
+
     const sql = `
       UPDATE performances 
       SET status = 'rejected', approver_id = ?, reject_reason = ?, approved_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `;
     req.db.run(sql, [req.user.id, reject_reason, id]);
+
+    writeAuditLog(req.db, {
+      user_id: req.user.id,
+      user_name: req.user.name,
+      action: 'reject_performance',
+      target_type: 'performance',
+      target_id: parseInt(id),
+      detail: JSON.stringify({
+        performance_name: perf.name,
+        previous_status: perf.status,
+        new_status: 'rejected',
+        reject_reason,
+        approver: req.user.name
+      }),
+      ip_address: req.ip
+    });
+
+    req.db.run('COMMIT');
     saveDb();
     res.json({ message: '演出项目已驳回' });
   } catch (err) {
+    try { req.db.run('ROLLBACK'); } catch (e) {}
     return res.status(500).json({ message: '驳回失败', error: err.message });
   }
 });

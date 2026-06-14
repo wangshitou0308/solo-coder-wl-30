@@ -1,6 +1,7 @@
 const express = require('express');
 const { saveDb } = require('../database/db');
 const { authenticateToken, requireRole } = require('../middleware/auth');
+const { writeAuditLog } = require('./audit');
 
 const router = express.Router();
 
@@ -114,13 +115,27 @@ router.get('/:id', authenticateToken, (req, res) => {
 
 router.post('/', authenticateToken, requireRole('scheduler', 'manager'), (req, res) => {
   try {
-    const { performance_id, theater_id, show_date, start_time, end_time, seat_template_id } = req.body;
+    let { performance_id, theater_id, show_date, start_time, end_time, seat_template_id } = req.body;
+
+    performance_id = Number(performance_id);
+    theater_id = Number(theater_id);
 
     const perf = req.db.prepare('SELECT * FROM performances WHERE id = ? AND status = ?').get([performance_id, 'approved']);
 
     if (!perf) {
       return res.status(400).json({ message: '演出项目不存在或未通过审批' });
     }
+
+    if (!end_time) {
+      try {
+        const [h, m] = start_time.split(':').map(n => parseInt(n, 10));
+        const eh = (h + 2) % 24;
+        end_time = `${String(eh).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+      } catch {
+        end_time = '23:59';
+      }
+    }
+    if (!seat_template_id) seat_template_id = null;
 
     const theaterConflict = checkTheaterConflict(req.db, theater_id, show_date, start_time, end_time);
     if (theaterConflict) {
@@ -136,12 +151,37 @@ router.post('/', authenticateToken, requireRole('scheduler', 'manager'), (req, r
       INSERT INTO shows (performance_id, theater_id, show_date, start_time, end_time, seat_template_id, created_by)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
-    const result = stmt.run([performance_id, theater_id, show_date, start_time, end_time, seat_template_id, req.user.id]);
+    const result = stmt.run([
+      performance_id, theater_id,
+      show_date, start_time, end_time,
+      seat_template_id, req.user.id
+    ]);
     const lastId = result.lastInsertRowid;
+
+    writeAuditLog(req.db, {
+      user_id: req.user.id,
+      user_name: req.user.name,
+      action: 'create_show',
+      target_type: 'show',
+      target_id: lastId,
+      detail: JSON.stringify({
+        show_id: lastId,
+        performance_id,
+        theater_id,
+        show_date,
+        start_time,
+        end_time,
+        seat_template_id,
+        initial_status: 'draft'
+      }),
+      ip_address: req.ip
+    });
+
     saveDb();
     res.status(201).json({ message: '场次创建成功', id: lastId });
   } catch (err) {
-    res.status(500).json({ message: '创建失败：' + (err.message || '未知错误') });
+    console.error('[shows] POST 500:', err);
+    res.status(500).json({ message: '创建失败：' + (err.message || '未知错误'), error: err.message });
   }
 });
 
@@ -226,10 +266,75 @@ router.put('/:id/status', authenticateToken, requireRole('scheduler', 'manager')
       return res.status(400).json({ message: `无法从${show.status}状态转换为${status}` });
     }
 
-    req.db.prepare('UPDATE shows SET status = ? WHERE id = ?').run([status, id]);
+    if (status === 'onsale') {
+      const ticketVersion = req.db.prepare(`
+        SELECT id FROM ticket_versions WHERE show_id = ? LIMIT 1
+      `).get([id]);
+      if (!ticketVersion) {
+        return res.status(400).json({ message: '场次尚未配置票版，请先设计票版后再上架' });
+      }
+      const seatCount = req.db.prepare(`
+        SELECT COUNT(*) as cnt FROM seats WHERE show_id = ?
+      `).get([id]).cnt;
+      if (!seatCount || seatCount === 0) {
+        return res.status(400).json({ message: '票版未生成座位数据，请重新设计票版' });
+      }
+    }
+
+    req.db.run('BEGIN IMMEDIATE');
+
+    let onsaleAt = show.onsale_at;
+    if (status === 'onsale' && !show.onsale_at) {
+      onsaleAt = new Date().toISOString();
+    }
+
+    let updateSql = 'UPDATE shows SET status = ?';
+    const updateParams = [status];
+    if (status === 'onsale' && !show.onsale_at) {
+      updateSql += ', onsale_at = ?';
+      updateParams.push(onsaleAt);
+    }
+    updateSql += ' WHERE id = ?';
+    updateParams.push(id);
+
+    req.db.prepare(updateSql).run(updateParams);
+
+    const detailObj = {
+      show_id: parseInt(id),
+      previous_status: show.status,
+      new_status: status,
+      performance_id: show.performance_id,
+      theater_id: show.theater_id,
+      show_date: show.show_date,
+      start_time: show.start_time
+    };
+
+    if (status === 'onsale') {
+      detailObj.onsale_at = onsaleAt;
+      detailObj.action = '上架场次';
+    } else if (status === 'ended') {
+      detailObj.action = '结束场次';
+    } else if (status === 'cancelled') {
+      detailObj.action = '取消场次';
+    } else if (status === 'soldout') {
+      detailObj.action = '售罄标记';
+    }
+
+    writeAuditLog(req.db, {
+      user_id: req.user.id,
+      user_name: req.user.name,
+      action: status === 'onsale' ? 'onsale_show' : (status === 'ended' ? 'end_show' : (status === 'cancelled' ? 'cancel_show' : 'update_show_status')),
+      target_type: 'show',
+      target_id: parseInt(id),
+      detail: JSON.stringify(detailObj),
+      ip_address: req.ip
+    });
+
+    req.db.run('COMMIT');
     saveDb();
     res.json({ message: `场次状态已更新为${status}` });
   } catch (err) {
+    try { req.db.run('ROLLBACK'); } catch (e) {}
     res.status(500).json({ message: '更新失败', error: err.message });
   }
 });

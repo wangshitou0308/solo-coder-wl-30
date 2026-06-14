@@ -19,6 +19,9 @@ import Settlement from './pages/statistics/Settlement';
 import Repertoire from './pages/statistics/Repertoire';
 import AudienceAnalysis from './pages/statistics/AudienceAnalysis';
 import Theaters from './pages/settings/Theaters';
+import SettlementManage from './pages/settlements/SettlementManage';
+import AuditLog from './pages/audit/AuditLog';
+import RefundRules from './pages/settings/RefundRules';
 
 const PrivateRoute = ({ children, roles }) => {
   const { user, loading } = useAuth();
@@ -139,10 +142,27 @@ const App = () => {
             </PrivateRoute>
           } />
         </Route>
-        
+
+        <Route path="settlements" element={
+          <PrivateRoute roles={['manager', 'finance']}>
+            <SettlementManage />
+          </PrivateRoute>
+        } />
+
+        <Route path="audit" element={
+          <PrivateRoute roles={['manager', 'finance']}>
+            <AuditLog />
+          </PrivateRoute>
+        } />
+
         <Route path="settings/theaters" element={
           <PrivateRoute roles={['manager']}>
             <Theaters />
+          </PrivateRoute>
+        } />
+        <Route path="settings/refund-rules" element={
+          <PrivateRoute roles={['manager', 'finance']}>
+            <RefundRules />
           </PrivateRoute>
         } />
       </Route>

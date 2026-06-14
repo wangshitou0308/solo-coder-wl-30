@@ -124,4 +124,37 @@ export const statsAPI = {
   getSettlements: (params) => api.get('/statistics/settlements', { params }),
 };
 
+export const settlementAPI = {
+  list: (params) => api.get('/settlements', { params }),
+  get: (id) => api.get(`/settlements/${id}`),
+  generate: (data) => api.post('/settlements/generate', data),
+  preview: (showId, params) => api.get(`/settlements/preview/${showId}`, { params }),
+  confirm: (id) => api.post(`/settlements/${id}/confirm`),
+  pay: (id) => api.post(`/settlements/${id}/pay`),
+  void: (id, data) => api.post(`/settlements/${id}/void`, data),
+  summary: () => api.get('/settlements/summary/stats'),
+  export: (id) => api.get(`/exports/settlements/${id}`, { responseType: 'blob' }),
+};
+
+export const auditAPI = {
+  list: (params) => api.get('/audit', { params }),
+  actions: () => api.get('/audit/actions'),
+  export: (params) => api.get('/audit/export', { params, responseType: 'blob' }),
+};
+
+export const refundRuleAPI = {
+  list: (params) => api.get('/refund-rules', { params }),
+  active: () => api.get('/refund-rules/active'),
+  create: (data) => api.post('/refund-rules', data),
+  update: (id, data) => api.put(`/refund-rules/${id}`, data),
+  toggle: (id, data) => api.post(`/refund-rules/${id}/delete`, data),
+};
+
+export const exportAPI = {
+  orders: (params) => api.get('/exports/orders', { params, responseType: 'blob' }),
+  boxOffice: (params) => api.get('/exports/box-office', { params, responseType: 'blob' }),
+  refunds: (params) => api.get('/exports/refunds', { params, responseType: 'blob' }),
+  settlement: (id) => api.get(`/exports/settlements/${id}`, { responseType: 'blob' }),
+};
+
 export default api;

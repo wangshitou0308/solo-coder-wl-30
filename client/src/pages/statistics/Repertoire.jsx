@@ -128,28 +128,8 @@ const Repertoire = () => {
   const handleViewDetail = async (record) => {
     setSelectedRepertoire(record);
     setModalVisible(true);
-    const mockHistory = generateMockHistory(record);
-    setPerformanceHistory(mockHistory);
-  };
-
-  const generateMockHistory = (record) => {
-    const theaters = ['大剧场', '小剧场', '实验剧场', '音乐厅'];
-    const count = Math.min(record.showCount || 10, 20);
-    return Array.from({ length: count }, (_, i) => {
-      const date = new Date();
-      date.setDate(date.getDate() - (i + 1) * Math.floor(Math.random() * 30 + 7));
-      const totalSeats = Math.floor(Math.random() * 500) + 300;
-      const soldSeats = Math.floor(totalSeats * (0.4 + Math.random() * 0.5));
-      return {
-        id: i + 1,
-        date: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(Math.floor(Math.random() * 12) + 10).padStart(2, '0')}:${['00', '30'][Math.floor(Math.random() * 2)]}`,
-        theater: theaters[Math.floor(Math.random() * theaters.length)],
-        totalSeats,
-        soldSeats,
-        occupancy: totalSeats > 0 ? Math.round((soldSeats / totalSeats) * 100) : 0,
-        revenue: soldSeats * (Math.floor(Math.random() * 300) + 100),
-      };
-    }).sort((a, b) => new Date(b.date) - new Date(a.date));
+    const history = record.showHistory || record.show_history || [];
+    setPerformanceHistory(history);
   };
 
   const handleSearch = () => {
@@ -481,8 +461,19 @@ const Repertoire = () => {
               <Descriptions.Item label="演出次数">
                 <strong>{selectedRepertoire.showCount || 0}</strong> 场
               </Descriptions.Item>
+              <Descriptions.Item label="复演次数">
+                <Space>
+                  <strong>{selectedRepertoire.reruns || selectedRepertoire.reRunCount || 0}</strong>
+                  <Tag color={(selectedRepertoire.reruns || 0) >= 5 ? 'green' : (selectedRepertoire.reruns || 0) >= 2 ? 'blue' : 'default'}>
+                    {(selectedRepertoire.reruns || 0) >= 5 ? '常演不衰' : (selectedRepertoire.reruns || 0) >= 2 ? '保留剧目' : '新剧'}
+                  </Tag>
+                </Space>
+              </Descriptions.Item>
               <Descriptions.Item label="累计观众">
                 {(selectedRepertoire.totalAudience || 0).toLocaleString()} 人
+              </Descriptions.Item>
+              <Descriptions.Item label="场均观众">
+                {selectedRepertoire.showCount ? Math.round((selectedRepertoire.totalAudience || 0) / selectedRepertoire.showCount).toLocaleString() : 0} 人
               </Descriptions.Item>
               <Descriptions.Item label="平均上座率">
                 <Tag color={parseFloat(selectedRepertoire.avgOccupancy) >= 80 ? 'success' : parseFloat(selectedRepertoire.avgOccupancy) >= 50 ? 'warning' : 'error'}>
@@ -494,7 +485,34 @@ const Repertoire = () => {
                   {formatCurrency(selectedRepertoire.totalRevenue)}
                 </span>
               </Descriptions.Item>
+              <Descriptions.Item label="场均票房">
+                {formatCurrency(selectedRepertoire.avgRevenuePerShow || (selectedRepertoire.showCount ? (selectedRepertoire.totalRevenue || 0) / selectedRepertoire.showCount : 0))}
+              </Descriptions.Item>
+              <Descriptions.Item label="最近演出">
+                {selectedRepertoire.lastShowDate || selectedRepertoire.lastShowAt || '-'}
+              </Descriptions.Item>
             </Descriptions>
+
+            {selectedRepertoire.occupancyTrend && selectedRepertoire.occupancyTrend.length > 1 && (
+              <>
+                <Title level={5} style={{ marginBottom: 8 }}>
+                  上座率趋势（共 {selectedRepertoire.occupancyTrend.length} 场）
+                </Title>
+                <Card size="small" style={{ marginBottom: 16, background: '#fafafa' }}>
+                  <Space size={[6, 6]} wrap>
+                    {selectedRepertoire.occupancyTrend.map((rate, idx) => (
+                      <Tag
+                        key={idx}
+                        color={rate >= 80 ? 'green' : rate >= 50 ? 'orange' : 'red'}
+                        style={{ fontSize: 12, padding: '2px 8px' }}
+                      >
+                        #{idx + 1}: {Number(rate).toFixed(0)}%
+                      </Tag>
+                    ))}
+                  </Space>
+                </Card>
+              </>
+            )}
 
             <Title level={5} style={{ marginBottom: 12 }}>
               历史演出记录
@@ -503,32 +521,42 @@ const Repertoire = () => {
             <List
               size="small"
               dataSource={performanceHistory}
-              renderItem={(item) => (
+              locale={{ emptyText: '暂无历史演出记录（后端未返回 show_history 字段）' }}
+              renderItem={(item, idx) => {
+                const date = item.date || `${item.showDate || '-'} ${item.startTime || ''}`.trim();
+                const theater = item.theater || item.theaterName || '-';
+                const totalSeats = item.totalSeats ?? item.totalSeatsCount ?? item.seatCount ?? 0;
+                const soldSeats = item.soldSeats ?? item.soldSeatsCount ?? item.ticketsSold ?? 0;
+                const occupancy = item.occupancy ?? (totalSeats > 0 ? Math.round((soldSeats / totalSeats) * 100) : 0);
+                const revenue = item.revenue ?? item.grossRevenue ?? 0;
+                return (
                 <List.Item
                   actions={[
                     <span key="occupancy">
                       上座率：
-                      <Tag color={item.occupancy >= 80 ? 'success' : item.occupancy >= 50 ? 'warning' : 'error'}>
-                        {item.occupancy}%
+                      <Tag color={occupancy >= 80 ? 'success' : occupancy >= 50 ? 'warning' : 'error'}>
+                        {occupancy}%
                       </Tag>
                     </span>,
                     <span key="revenue" style={{ color: '#52c41a', fontWeight: 600 }}>
-                      {formatCurrency(item.revenue)}
+                      {formatCurrency(revenue)}
                     </span>,
                   ]}
                 >
                   <List.Item.Meta
-                    title={item.date}
+                    avatar={<Tag color="blue">#{idx + 1}</Tag>}
+                    title={date}
                     description={
                       <Space size="middle">
-                        <span>剧场：{item.theater}</span>
-                        <span>总座位：{item.totalSeats}</span>
-                        <span>已售：{item.soldSeats}</span>
+                        <span>剧场：{theater}</span>
+                        <span>总座位：{totalSeats}</span>
+                        <span>已售：{soldSeats}</span>
                       </Space>
                     }
                   />
                 </List.Item>
-              )}
+              );
+              }}
               pagination={{
                 pageSize: 5,
                 size: 'small',

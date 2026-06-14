@@ -2,6 +2,7 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { saveDb } = require('../database/db');
 const { authenticateToken, requireRole } = require('../middleware/auth');
+const { writeAuditLog } = require('./audit');
 
 const router = express.Router();
 
@@ -197,6 +198,31 @@ router.post('/create', authenticateToken, (req, res) => {
     req.db.run('COMMIT');
     saveDb();
 
+    writeAuditLog(req.db, {
+      user_id: req.user.id,
+      user_name: req.user.name,
+      action: 'create_order',
+      target_type: 'order',
+      target_id: orderId,
+      detail: JSON.stringify({
+        order_id: orderId,
+        order_no: orderNo,
+        show_id,
+        seat_ids,
+        buyer_name,
+        buyer_phone,
+        channel: order_type || 'online',
+        payment_method: payment_method || null,
+        payment_status: paymentStatus,
+        total_amount: totalAmount,
+        discount_amount: discountAmount,
+        actual_amount: actualAmount,
+        expires_at: expiresAt
+      }),
+      ip_address: req.ip
+    });
+    saveDb();
+
     const result = {
       orderId,
       orderNo,
@@ -263,6 +289,26 @@ router.post('/:id/pay', authenticateToken, (req, res) => {
     `, [order.show_id, order.show_id]);
 
     req.db.run('COMMIT');
+    saveDb();
+
+    writeAuditLog(req.db, {
+      user_id: req.user.id,
+      user_name: req.user.name,
+      action: 'pay_order',
+      target_type: 'order',
+      target_id: parseInt(id),
+      detail: JSON.stringify({
+        order_id: parseInt(id),
+        order_no: order.order_no,
+        show_id: order.show_id,
+        payment_method,
+        previous_status: order.payment_status,
+        new_status: 'paid',
+        actual_amount: order.actual_amount,
+        paid_at: new Date().toISOString()
+      }),
+      ip_address: req.ip
+    });
     saveDb();
 
     res.json({ message: '支付成功' });
@@ -405,46 +451,190 @@ router.get('/:id', authenticateToken, (req, res) => {
   }
 });
 
+const insertAuditLogOrder = (db, userId, userName, action, targetType, targetId, detail, ipAddress) => {
+  try {
+    db.prepare(`
+      INSERT INTO audit_logs (user_id, user_name, action, target_type, target_id, detail, ip_address, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `).run([userId, userName, action, targetType, targetId, detail, ipAddress || null]);
+  } catch (err) {
+    console.warn('audit_log insert failed:', err.message);
+  }
+};
+
+const generateRefundNo = () => {
+  return 'REF' + Date.now() + Math.random().toString(36).substr(2, 4).toUpperCase();
+};
+
 router.post('/:id/refund', authenticateToken, requireRole('seller', 'scheduler', 'manager'), (req, res) => {
   const { id } = req.params;
-  const { reason } = req.body;
+  const { reason, seat_ids } = req.body;
 
   if (!reason) {
     return res.status(400).json({ message: '请填写退票原因' });
   }
 
   try {
-    const order = req.db.prepare(`
-      SELECT o.* FROM orders o
-      JOIN shows s ON o.show_id = s.id
-      WHERE o.id = ? AND o.payment_status = 'paid' AND s.status != 'ended'
-    `).get([id]);
-    
-    if (!order) return res.status(400).json({ message: '订单不存在或不可退票' });
-
     req.db.run('BEGIN IMMEDIATE');
 
-    const items = req.db.prepare('SELECT * FROM order_items WHERE order_id = ?').all([id]);
+    const order = req.db.prepare(`
+      SELECT o.*, s.show_date, s.start_time, s.end_time, s.status as show_status
+      FROM orders o
+      JOIN shows s ON o.show_id = s.id
+      WHERE o.id = ? AND o.payment_status IN ('paid', 'partial_refunded')
+    `).get([id]);
 
-    let totalRefund = 0;
-    items.forEach(item => {
+    if (!order) {
+      req.db.run('ROLLBACK');
+      return res.status(400).json({ message: '订单不存在或不可退票（当前状态不支持）' });
+    }
+
+    const refundRule = req.db.prepare(`
+      SELECT * FROM refund_rules WHERE is_active = 1 ORDER BY id ASC LIMIT 1
+    `).get([]);
+
+    if (!refundRule) {
+      req.db.run('ROLLBACK');
+      return res.status(500).json({ message: '系统未配置退票规则，请联系管理员' });
+    }
+
+    const showDateTime = new Date(`${order.show_date}T${order.start_time}`);
+    const now = new Date();
+    const hoursBeforeShow = (showDateTime.getTime() - now.getTime()) / (1000 * 60 * 60);
+    const deadlineHours = refundRule.deadline_hours_before || 0;
+
+    if (deadlineHours > 0 && hoursBeforeShow < deadlineHours) {
+      req.db.run('ROLLBACK');
+      return res.status(400).json({
+        message: `演出前 ${deadlineHours} 小时内不可退票（当前距演出仅 ${hoursBeforeShow.toFixed(2)} 小时）`
+      });
+    }
+
+    const hasSettlement = req.db.prepare(`
+      SELECT id, settlement_no, status FROM settlements
+      WHERE show_id = ? AND is_void = 0 LIMIT 1
+    `).get([order.show_id]);
+
+    if (hasSettlement && !refundRule.allow_refund_after_settlement) {
+      req.db.run('ROLLBACK');
+      return res.status(400).json({
+        message: `该场次已生成结算单（${hasSettlement.settlement_no}），根据规则结算后不可退票`
+      });
+    }
+
+    let orderItems = req.db.prepare(`
+      SELECT oi.*, s.status as seat_status, sz.zone_name, s.row_label, s.seat_number
+      FROM order_items oi
+      JOIN seats s ON oi.seat_id = s.id
+      LEFT JOIN seat_zones sz ON s.zone_id = sz.id
+      WHERE oi.order_id = ?
+    `).all([id]);
+
+    const existingRefundSeatIds = req.db.prepare(`
+      SELECT rf.seat_id FROM refunds rf WHERE rf.order_id = ?
+    `).all([id]).map(r => r.seat_id);
+
+    let refundableItems = orderItems.filter(oi => !existingRefundSeatIds.includes(oi.seat_id));
+
+    if (refundableItems.length === 0) {
+      req.db.run('ROLLBACK');
+      return res.status(400).json({ message: '该订单没有可退票的座位' });
+    }
+
+    let targetItems;
+    if (seat_ids && Array.isArray(seat_ids) && seat_ids.length > 0) {
+      if (!refundRule.allow_partial) {
+        req.db.run('ROLLBACK');
+        return res.status(400).json({ message: '根据当前退票规则，不支持部分退票' });
+      }
+      const seatIdSet = new Set(seat_ids.map(Number));
+      targetItems = refundableItems.filter(oi => seatIdSet.has(oi.seat_id));
+      if (targetItems.length === 0) {
+        req.db.run('ROLLBACK');
+        return res.status(400).json({ message: '所选座位均不可退或已退' });
+      }
+      if (targetItems.length !== seat_ids.length) {
+        const foundIds = new Set(targetItems.map(t => t.seat_id));
+        const missingIds = seat_ids.filter(sid => !foundIds.has(Number(sid)));
+        req.db.run('ROLLBACK');
+        return res.status(400).json({
+          message: `部分座位不可退或已退: [${missingIds.join(', ')}]`
+        });
+      }
+    } else {
+      targetItems = refundableItems;
+    }
+
+    let totalRefundAmount = 0;
+    let totalFeeAmount = 0;
+    const refundedSeats = [];
+
+    const feeRate = parseFloat(refundRule.fee_rate) || 0;
+    const feeMin = parseFloat(refundRule.fee_minimum_amount) || 0;
+
+    const insertRefundStmt = req.db.prepare(`
+      INSERT INTO refunds (order_id, order_item_id, seat_id, refund_no, refund_amount, fee_amount, reason, operator_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `);
+
+    for (const item of targetItems) {
+      const refundAmount = parseFloat(item.discount_price) || 0;
+      const rawFee = refundAmount * feeRate / 100;
+      const feeAmount = parseFloat(Math.max(rawFee, feeMin).toFixed(2));
+      const netRefund = parseFloat((refundAmount - feeAmount).toFixed(2));
+
+      const refundNo = generateRefundNo();
+
+      insertRefundStmt.run([
+        id,
+        item.id,
+        item.seat_id,
+        refundNo,
+        refundAmount,
+        feeAmount,
+        reason,
+        req.user.id
+      ]);
+
       req.db.run(`
-        INSERT INTO refunds (order_id, order_item_id, seat_id, refund_amount, reason, operator_id)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `, [id, item.id, item.seat_id, item.discount_price, reason, req.user.id]);
-      
-      req.db.run(`
-        UPDATE seats SET status = 'available', lock_type = NULL WHERE id = ?
+        UPDATE seats SET status = 'available', lock_type = NULL, held_by_phone = NULL, held_expires_at = NULL
+        WHERE id = ?
       `, [item.seat_id]);
-      
-      totalRefund += item.discount_price;
-    });
 
-    req.db.run(`
+      totalRefundAmount += refundAmount;
+      totalFeeAmount += feeAmount;
+      refundedSeats.push({
+        seat_id: item.seat_id,
+        seat_label: `${item.row_label || ''}${item.seat_number || ''}`,
+        zone_name: item.zone_name,
+        refund_amount: refundAmount,
+        fee_amount: feeAmount,
+        net_refund: netRefund,
+        refund_no: refundNo
+      });
+    }
+
+    totalRefundAmount = parseFloat(totalRefundAmount.toFixed(2));
+    totalFeeAmount = parseFloat(totalFeeAmount.toFixed(2));
+    const totalNetRefund = parseFloat((totalRefundAmount - totalFeeAmount).toFixed(2));
+
+    const refundedCountAfter = req.db.prepare(`
+      SELECT COUNT(*) as cnt FROM refunds WHERE order_id = ?
+    `).get([id]).cnt;
+
+    const allItemCount = orderItems.length;
+    const isFullRefund = refundedCountAfter >= allItemCount;
+
+    const newStatus = isFullRefund ? 'refunded' : 'partial_refunded';
+
+    const currentRefundFee = parseFloat(order.refund_fee) || 0;
+    const updatedRefundFee = parseFloat((currentRefundFee + totalFeeAmount).toFixed(2));
+
+    req.db.prepare(`
       UPDATE orders 
-      SET payment_status = 'refunded' 
+      SET payment_status = ?, refund_fee = ?
       WHERE id = ?
-    `, [id]);
+    `).run([newStatus, updatedRefundFee, id]);
 
     req.db.run(`
       UPDATE shows SET status = 'onsale' 
@@ -452,10 +642,38 @@ router.post('/:id/refund', authenticateToken, requireRole('seller', 'scheduler',
         AND (SELECT COUNT(*) FROM seats WHERE show_id = ? AND status IN ('available', 'locked')) > 0
     `, [order.show_id, order.show_id]);
 
+    const auditDetail = JSON.stringify({
+      order_no: order.order_no,
+      refund_type: isFullRefund ? 'full' : 'partial',
+      refund_count: targetItems.length,
+      total_refund_amount: totalRefundAmount,
+      total_fee_amount: totalFeeAmount,
+      total_net_refund: totalNetRefund,
+      seats: refundedSeats,
+      reason: reason,
+      refund_rule_applied: {
+        id: refundRule.id,
+        name: refundRule.name,
+        fee_rate: feeRate,
+        fee_minimum: feeMin,
+        deadline_hours: deadlineHours
+      }
+    });
+    insertAuditLogOrder(req.db, req.user.id, req.user.name, 'refund_order', 'order', id, auditDetail, req.ip);
+
     req.db.run('COMMIT');
     saveDb();
 
-    res.json({ message: '退票成功', refund_amount: totalRefund });
+    res.json({
+      message: isFullRefund ? '全额退票成功' : '部分退票成功',
+      refund_type: isFullRefund ? 'full' : 'partial',
+      order_status: newStatus,
+      refunded_seat_count: targetItems.length,
+      total_refund_amount: totalRefundAmount,
+      total_fee_amount: totalFeeAmount,
+      total_net_refund: totalNetRefund,
+      refunded_seats: refundedSeats
+    });
   } catch (err) {
     try { req.db.run('ROLLBACK'); } catch (e) {}
     return res.status(500).json({ message: '退票失败', error: err.message });
